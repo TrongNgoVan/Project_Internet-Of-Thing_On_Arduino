@@ -1,138 +1,109 @@
- 
+#include <WiFi.h>
+#include <WiFiClientSecure.h> // Sử dụng SSL
+#include <PubSubClient.h>
 #include "DHT.h"
+#include <ArduinoJson.h> // Thêm thư viện xử lý JSON
 
-#define DHTPIN 4   
-  // Chân tín hiệu ( chân giữa) với GIPO4 (D4)
-
-#define DHTTYPE DHT11  
+#define DHTPIN 4        // Chân tín hiệu với GPIO4 (D4)
+#define DHTTYPE DHT11   // Kiểu cảm biến
 
 DHT dht(DHTPIN, DHTTYPE);
 
+
+
+// Thông tin Wi-Fi
+const char* ssid = "Ngọ Văn Trọng";         // Thay đổi YOUR_SSID với tên mạng Wi-Fi của bạn
+const char* password = "13082003"; // Thay đổi YOUR_PASSWORD với mật khẩu mạng Wi-Fi của bạn
+
+// Thông tin MQTT
+const char* mqttServer = "14d84e2f560e4c91bc725916ed6511e8.s1.eu.hivemq.cloud"; // Địa chỉ server HiveMQ
+const int mqttPort =8883;                     // Cổng SSL
+const char* mqttUser = "ngovantrong";  // Client ID của bạn
+const char* mqttPassword = "123";                  // Mật khẩu, để trống nếu không cần
+    
+
+WiFiClientSecure espClient;
+PubSubClient client(espClient);
+
+unsigned long lastMsg = 0;
+#define MSG_BUFFER_SIZE (50)
+char msg[MSG_BUFFER_SIZE];
+
+void setup_wifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  randomSeed(micros());
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+//------------Connect to MQTT Broker-----------------------------
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    String clientID =  "ESPClient-";
+    clientID += String(random(0xffff),HEX);
+    if (client.connect(clientID.c_str(),  mqttUser ,mqttPassword)) {
+      Serial.println("connected");
+      client.subscribe("esp32_dht11_Ngọ Văn Trọng/client");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+//-----Call back Method for Receiving MQTT massage---------
+void callback(char* topic, byte* payload, unsigned int length) {
+  String incommingMessage = "";
+  for(int i=0; i<length;i++) incommingMessage += (char)payload[i];
+  Serial.println("Massage arived ["+String(topic)+"]"+incommingMessage);
+}
+//-----Method for Publishing MQTT Messages---------
+void publishMessage(const char* topic, String payload, boolean retained){
+  if(client.publish(topic,payload.c_str(),true))
+    Serial.println("Message published ["+String(topic)+"]: "+payload);
+}
+
+
 void setup() {
   Serial.begin(9600);
-  Serial.println(F("DHTxx test!"));
+  while(!Serial) delay(1);
 
-  dht.begin();
+ 
+
+  setup_wifi();
+  espClient.setInsecure();
+  client.setServer(mqttServer,mqttPort );
+  client.setCallback(callback);
 }
-
+unsigned long timeUpdata=millis();
 void loop() {
-  // Wait a few seconds between measurements.
-  delay(2000);
-
-  
-  float h = dht.readHumidity();
-  // Read temperature as Celsius (the default)
-  float t = dht.readTemperature();
-  // Read temperature as Fahrenheit (isFahrenheit = true)
-  float f = dht.readTemperature(true);
-
-  // Check if any reads failed and exit early (to try again).
-  if (isnan(h) || isnan(t) || isnan(f)) {
-    Serial.println(F("Failed to read from DHT sensor!"));
-    return;
+  if (!client.connected()) {
+    reconnect();
   }
+  client.loop();
+  //read DHT11
+  if(millis()-timeUpdata>5000){
+    float h = dht.readHumidity();
+    float t = dht.readTemperature();
 
-  // Compute heat index in Fahrenheit (the default)
-  float hif = dht.computeHeatIndex(f, h);
-  // Compute heat index in Celsius (isFahreheit = false)
-  float hic = dht.computeHeatIndex(t, h, false);
+    DynamicJsonDocument doc(1024);
+    doc["humidity"]=h;
+    doc["temperature"]=t;
+    char mqtt_message[128];
+    serializeJson(doc,mqtt_message);
+    publishMessage("esp32/ddht11/Ngọ Văn Trọng", mqtt_message, true);
 
-  Serial.print(F("Humidity: "));
-  Serial.print(h);
-  Serial.print(F("%  Temperature: "));
-  Serial.print(t);
-  Serial.print(F("°C "));
-  Serial.print(f);
-  Serial.print(F("°F  Heat index: "));
-  Serial.print(hic);
-  Serial.print(F("°C "));
-  Serial.print(hif);
-  Serial.println(F("°F"));
+    timeUpdata=millis();
+  }
 }
-// #define BLYNK_TEMPLATE_ID "TMPL6VXt7MQDH"
-// #define BLYNK_TEMPLATE_NAME "Control DHT"
-// #define BLYNK_AUTH_TOKEN "dQ3Obep5wYbyMIcb8zCyaPYKlzZcOJL-"
-
-// // Định nghĩa cách bạn muốn ghi log ra Serial Monitor để theo dõi tình trạng hoạt động của chương trình.
-// #define BLYNK_PRINT Serial
-
-// #include <WiFi.h>
-// #include <WiFiClient.h>
-// #include <BlynkSimpleEsp32.h>
-// #include "DHT.h"
-
-// // Định nghĩa liên quan đến cảm biến DHT22
-// #define DHTPIN 5
-// #define DHTTYPE DHT22
-// DHT dht(DHTPIN, DHTTYPE);
-
-// // Định nghĩa tên và mật khẩu của mạng Wi-Fi mà ESP32 sẽ kết nối.
-// char ssid[] = "Wokwi-GUEST";
-// char pass[] = "";
-
-// // Định nghĩa một đối tượng BlynkTimer được sử dụng để quản lý thời gian trong chương trình.
-// BlynkTimer timer;
-
-// // Định nghĩa các chân GPIO được sử dụng
-// #define LED 4
-
-// // Hàm callback được gọi khi giá trị nút nhấn trên ứng dụng Blynk thay đổi.
-// // Nếu giá trị của nút nhấn là 1 (được bật), LED sẽ được bật (HIGH), 
-// // ngược lại nếu giá trị là 0 (được tắt), LED sẽ được tắt (LOW).
-// BLYNK_WRITE(V3) {
-//   int value = param.asInt();
-//   if (value) {
-//     Serial.println("Button pressed");
-//     // Thực hiện hành động khi nút nhấn được bật
-//     // Ví dụ: bật LED
-//     digitalWrite(LED, HIGH);
-//   } else {
-//     Serial.println("Button released");
-//     // Thực hiện hành động khi nút nhấn được tắt
-//     // Ví dụ: tắt LED
-//     digitalWrite(LED, LOW);
-//   }
-// }
-
-// // Hàm này đọc dữ liệu từ cảm biến DHT22 và gửi dữ liệu này lên dự án Blynk.
-// void sendSensor() {
-//   float h = dht.readHumidity();
-//   float t = dht.readTemperature(); // Celsius
-
-//   if (isnan(h) || isnan(t)) {
-//     Serial.println("Failed to read from DHT sensor!");
-//     return;
-//   }
-
-//   // Ghi giá trị h lên V1 và t lên V0
-//   Blynk.virtualWrite(V1, h); // Virtual pin V1 cho độ ẩm
-//   Blynk.virtualWrite(V0, t); // Virtual pin V0 cho nhiệt độ
-// }
-
-// // Trong hàm setup(), chương trình bắt đầu bằng việc thiết lập kết nối với ứng dụng Blynk,
-// // khai báo các chân GPIO, khởi động cảm biến DHT22, và thiết lập một bộ định thời (timer)
-// // để gửi dữ liệu từ cảm biến lên Blynk cứ sau mỗi giây.
-// void setup() {
-//   // Debug console
-//   Serial.begin(115200);
-//   delay(1000);
-
-//   // Kết nối với Wi-Fi và Blynk
-//   Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
-
-//   // Khởi động cảm biến DHT22
-//   dht.begin();
-
-//   // Thiết lập các chân GPIO
-//   pinMode(LED, OUTPUT);
-
-//   // Thiết lập một hàm sẽ được gọi mỗi giây
-//   timer.setInterval(1000L, sendSensor);
-// }
-
-// // Hàm loop() chứa vòng lặp chính, trong đó Blynk.run() và timer.run() được gọi liên tục
-// // để duy trì kết nối với Blynk và quản lý thời gian gửi dữ liệu từ cảm biến.
-// void loop() {
-//   Blynk.run(); // Chạy Blynk
-//   timer.run(); // Chạy timer
-// }
